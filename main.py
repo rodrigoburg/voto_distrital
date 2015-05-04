@@ -1,13 +1,13 @@
 from pandas import read_csv, DataFrame
 import numpy as np
-import matplotlib.pyplot as plt
-import itertools
 import json
 import random
 from pylab import plot,show
 from numpy import vstack,array
-from numpy.random import rand
 from scipy.cluster.vq import kmeans, kmeans2,vq
+import math
+import itertools
+import matplotlib.pyplot as plt
 
 def cluster_points(X, mu):
     clusters  = {}
@@ -85,7 +85,7 @@ def acha_secoes(texto):
 
     return saida
 
-def plota_coordenadas():
+def cluster_algoritmo():
     dados = read_csv("secoes_com_votacao.csv")
     #divisor = "bairro"
     #cmap = plt.get_cmap('jet')
@@ -102,6 +102,8 @@ def plota_coordenadas():
     dados["latlong"] = dados.apply(lambda t:(t["lat"],t["long"]),axis=1)
     pontos = list(dados["latlongaptos"])
     data = vstack(pontos)
+
+
 
     num_iteracoes = 0
     num_clusters = 6
@@ -200,8 +202,152 @@ def junta_tabelas():
     saida.to_csv("secoes_com_votacao.csv",index=False)
 
 
+def eh_contiguo(a,b,distancia_padrao):
+    return True if distancia_euclidiana(a,b) < distancia_padrao else False
+
+def distancia_euclidiana(a,b):
+    return math.sqrt(math.pow(a[0]-b[0],2)+math.pow(a[1]-b[1],2))*1000
+
+def acha_proximo(a,lista,distancia_padrao,ja_tem_grupo):
+    for item in lista:
+        if item not in ja_tem_grupo:
+            if eh_contiguo(a,item,distancia_padrao):
+                return item
+    #se acabar sem achar nenhum contiguo
+    return False
+
+def itera_grupo(grupo_atual,num_grupos,distancia):
+    if grupo_atual < num_grupos:
+        return grupo_atual+1,distancia
+    else: return 1,distancia*1.05
+
+
+def grupo_passou_tamanho(grupos, grupo, max_tamanho):
+    itens_no_grupo = [i for i in grupos if grupos[i] == grupo]
+    tamanho = sum([i[2] for i in itens_no_grupo])
+    return tamanho > max_tamanho
+
+def nao_terminou(grupos,itens):
+    return len(grupos) == len(itens)
+
+def invert_dict(d):
+    newdict = {}
+    for k, v in d.items():
+        newdict.setdefault(v, []).append(k)
+    return newdict
+
+def acha_grupo(item,grupos,distancia_padrao):
+    grupos = invert_dict(grupos)
+    menor_distancia = distancia_padrao*2
+    saida = False
+    for grupo in grupos:
+        distancia = distancia_euclidiana(item,grupos[grupo][0])
+        if distancia < menor_distancia:
+            menor_distancia = distancia
+            saida = grupo
+
+    return saida
+
+
+def cluster_meu(num_grupos=55,max_iteracoes=10000,max_tamanho=155000,distancia_padrao=20):
+    #arruma os dados
+    dados = read_csv("secoes_com_votacao.csv")
+    dados["latlongaptos"] = dados.apply(lambda t:(t["lat"],t["long"],t["aptos_por_local"]),axis=1)
+    dados["latlong"] = dados.apply(lambda t:(t["lat"],t["long"]),axis=1)
+    itens = list(dados["latlongaptos"])
+    nao_tem_grupo = itens
+    while True:
+        grupos = {}
+        iteracoes = 0
+        grupo_atual = 1
+        distancia_padrao=20
+        ja_tem_grupo = []
+
+        while nao_terminou(grupos,itens) or iteracoes < max_iteracoes:
+
+            item = random.choice(itens)
+            proximo = acha_proximo(item,nao_tem_grupo,distancia_padrao,ja_tem_grupo)
+
+            if iteracoes % 100 == 0:
+                print("ITERAÇÃO NÚMERO "+str(iteracoes))
+                print("JÁ TEMOS "+str(len(ja_tem_grupo))+" ITENS COM GRUPO")
+
+
+            #pula se não tiver achado proximo ou se o proximo por acaso for o mesmo que o item anterior
+            if not proximo or proximo == item:
+                continue
+
+            #se o item já tiver um grupo, coloca o mesmo pro proximo
+            if item in grupos:
+                grupo = grupos[item]
+                #mas só se o tamanho não chegou ainda no nosso médio
+                if not grupo_passou_tamanho(grupos,grupo,max_tamanho):
+                    grupos[proximo] = grupos[item]
+                    ja_tem_grupo.append(proximo)
+                    nao_tem_grupo.remove(proximo)
+
+            #checa o mesmo para o proximo
+            elif proximo in grupos:
+                grupo = grupos[proximo]
+                if not grupo_passou_tamanho(grupos,grupo,max_tamanho):
+                    grupos[item] = grupos[proximo]
+                    ja_tem_grupo.append(item)
+                    nao_tem_grupo.remove(item)
+            #se não, tenta achar um grupo próximo, no limite relativo à distância padrão atual
+            else:
+                grupo = acha_grupo(item,grupos,distancia_padrao)
+                #se tiver esse grupo
+                if grupo:
+                    if not grupo_passou_tamanho(grupos,grupo,max_tamanho):
+                        grupos[item] = grupo
+                        grupos[proximo] = grupo
+                        ja_tem_grupo += [item,proximo]
+                        nao_tem_grupo.remove(item)
+                        nao_tem_grupo.remove(proximo)
+                #se não, cria um novo daí
+                else:
+                    grupo = grupo_atual
+                    if not grupo_passou_tamanho(grupos,grupo_atual,max_tamanho):
+                        grupos[item] = grupo
+                        grupos[proximo] = grupo
+                        ja_tem_grupo += [item,proximo]
+                        nao_tem_grupo.remove(item)
+                        nao_tem_grupo.remove(proximo)
+
+            grupo_atual,distancia_padrao = itera_grupo(grupo_atual,num_grupos,distancia_padrao)
+            iteracoes += 1
+
+        print(distancia_padrao)
+        print("ITERAÇÕES: "+str(iteracoes))
+        print("FALTARAM "+str(len(itens)-len(grupos))+" LOCAIS DE VOTAÇÃO")
+
+        #saida = invert_dict(grupos)
+
+        dados["divisor"] = dados.apply(lambda t:grupos[t["latlongaptos"]] if t["latlongaptos"] in grupos else 0,axis=1)
+
+        dados = dados[dados.divisor != 0]
+
+        print("TEMOS "+str(len(set(dados["divisor"])))+" GRUPOS DIFERENTES")
+        print("TAMANHO MAXIMO DE UM GRUPO: "+str(max([sum(dados[dados.divisor == z]["aptos_por_local"]) for z in set(dados["divisor"])])))
+        print("TAMANHO MINIMO DE UM GRUPO: "+str(min([sum(dados[dados.divisor == z]["aptos_por_local"]) for z in set(dados["divisor"])])))
+        print("TAMANHO MEDIO DE UM GRUPO: "+str(np.average([sum(dados[dados.divisor == z]["aptos_por_local"]) for z in set(dados["divisor"])])))
+
+    cmap = plt.get_cmap('jet')
+    colors = itertools.cycle([cmap(i) for i in np.linspace(0, 1, len(set(dados["divisor"])))])
+
+
+    for z in set(dados["divisor"]):
+        subdados = dados[dados["divisor"] == z]
+        plt.scatter(subdados.lat,subdados.long, color=next(colors))
+    plt.show()
+    return
+
+
+
+
 #converte_geojson()
 #junta_tabelas()
+#cluster_algoritmo()
 
-plota_coordenadas()
+cluster_meu()
 
