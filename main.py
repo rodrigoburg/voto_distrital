@@ -342,12 +342,155 @@ def cluster_meu(num_grupos=55,max_iteracoes=10000,max_tamanho=155000,distancia_p
     plt.show()
     return
 
+def distancia_media(itens):
+    distancias = []
+    for i in itens:
+        for j in itens:
+            if i != j:
+                distancias.append(distancia_euclidiana(i,j))
+    saida = np.average(distancias)
+    print("DISTANCIA MEDIA: "+str(saida))
+    return saida
 
+def acha_seeds(itens,num_grupos):
+    distancia = distancia_media(itens)*0.3
+    seeds = []
+    item = random.choice(itens)
+    seeds.append(item)
+    iteracoes = 0
+    #enqnt não achar todos os seeds
+    while len(seeds) != num_grupos:
+        item,distancia = acha_proximo_seed(seeds,itens,distancia)
+        if item:
+            seeds.append(item)
+        iteracoes +=1
+        if iteracoes % 100 == 0:
+            print("ITERAÇÃO NÚMERO "+str(iteracoes))
+    return seeds
+
+def eh_perto_de_seed(a,seeds,distancia):
+    for s in seeds:
+        if distancia_euclidiana(a,s) < distancia:
+            return True
+    return False
+
+def acha_proximo_seed(seeds,itens,distancia):
+    nao_seeds = [i for i in itens if i not in seeds]
+    for n in nao_seeds:
+        if not eh_perto_de_seed(n,seeds,distancia):
+            return n,distancia
+    return False,distancia*0.98
+
+
+#segunda tentativa, agora com um random seeding no começo
+def cluster_meu2(num_grupos=55,max_iteracoes=10000,max_tamanho=155000,distancia_padrao=20):
+    #arruma os dados
+    dados = read_csv("secoes_com_votacao.csv")
+    dados["latlongaptos"] = dados.apply(lambda t:(t["lat"],t["long"],t["aptos_por_local"]),axis=1)
+    dados["latlong"] = dados.apply(lambda t:(t["lat"],t["long"]),axis=1)
+    itens = list(dados["latlongaptos"])
+    nao_tem_grupo = itens
+    grupos = {}
+    iteracoes = 0
+    grupo_atual = 1
+    distancia_padrao=20
+    ja_tem_grupo = []
+
+    seeds = acha_seeds(itens,num_grupos)
+    dados["divisor"] = dados.apply(lambda t:1 if t["latlongaptos"] in seeds else 0,axis=1)
+    cmap = plt.get_cmap('jet')
+    colors = itertools.cycle([cmap(i) for i in np.linspace(0, 1, len(set(dados["divisor"])))])
+
+
+    for z in set(dados["divisor"]):
+        subdados = dados[dados["divisor"] == z]
+        plt.scatter(subdados.lat,subdados.long, color=next(colors))
+    plt.show()
+
+    return
+    while nao_terminou(grupos,itens) or iteracoes < max_iteracoes:
+
+        item = random.choice(itens)
+        proximo = acha_proximo(item,nao_tem_grupo,distancia_padrao,ja_tem_grupo)
+
+        if iteracoes % 100 == 0:
+            print("ITERAÇÃO NÚMERO "+str(iteracoes))
+            print("JÁ TEMOS "+str(len(ja_tem_grupo))+" ITENS COM GRUPO")
+
+
+        #pula se não tiver achado proximo ou se o proximo por acaso for o mesmo que o item anterior
+        if not proximo or proximo == item:
+            continue
+
+        #se o item já tiver um grupo, coloca o mesmo pro proximo
+        if item in grupos:
+            grupo = grupos[item]
+            #mas só se o tamanho não chegou ainda no nosso médio
+            if not grupo_passou_tamanho(grupos,grupo,max_tamanho):
+                grupos[proximo] = grupos[item]
+                ja_tem_grupo.append(proximo)
+                nao_tem_grupo.remove(proximo)
+
+        #checa o mesmo para o proximo
+        elif proximo in grupos:
+            grupo = grupos[proximo]
+            if not grupo_passou_tamanho(grupos,grupo,max_tamanho):
+                grupos[item] = grupos[proximo]
+                ja_tem_grupo.append(item)
+                nao_tem_grupo.remove(item)
+        #se não, tenta achar um grupo próximo, no limite relativo à distância padrão atual
+        else:
+            grupo = acha_grupo(item,grupos,distancia_padrao)
+            #se tiver esse grupo
+            if grupo:
+                if not grupo_passou_tamanho(grupos,grupo,max_tamanho):
+                    grupos[item] = grupo
+                    grupos[proximo] = grupo
+                    ja_tem_grupo += [item,proximo]
+                    nao_tem_grupo.remove(item)
+                    nao_tem_grupo.remove(proximo)
+            #se não, cria um novo daí
+            else:
+                grupo = grupo_atual
+                if not grupo_passou_tamanho(grupos,grupo_atual,max_tamanho):
+                    grupos[item] = grupo
+                    grupos[proximo] = grupo
+                    ja_tem_grupo += [item,proximo]
+                    nao_tem_grupo.remove(item)
+                    nao_tem_grupo.remove(proximo)
+
+        grupo_atual,distancia_padrao = itera_grupo(grupo_atual,num_grupos,distancia_padrao)
+        iteracoes += 1
+
+    print(distancia_padrao)
+    print("ITERAÇÕES: "+str(iteracoes))
+    print("FALTARAM "+str(len(itens)-len(grupos))+" LOCAIS DE VOTAÇÃO")
+
+    #saida = invert_dict(grupos)
+
+    dados["divisor"] = dados.apply(lambda t:grupos[t["latlongaptos"]] if t["latlongaptos"] in grupos else 0,axis=1)
+
+    dados = dados[dados.divisor != 0]
+
+    print("TEMOS "+str(len(set(dados["divisor"])))+" GRUPOS DIFERENTES")
+    print("TAMANHO MAXIMO DE UM GRUPO: "+str(max([sum(dados[dados.divisor == z]["aptos_por_local"]) for z in set(dados["divisor"])])))
+    print("TAMANHO MINIMO DE UM GRUPO: "+str(min([sum(dados[dados.divisor == z]["aptos_por_local"]) for z in set(dados["divisor"])])))
+    print("TAMANHO MEDIO DE UM GRUPO: "+str(np.average([sum(dados[dados.divisor == z]["aptos_por_local"]) for z in set(dados["divisor"])])))
+
+    cmap = plt.get_cmap('jet')
+    colors = itertools.cycle([cmap(i) for i in np.linspace(0, 1, len(set(dados["divisor"])))])
+
+
+    for z in set(dados["divisor"]):
+        subdados = dados[dados["divisor"] == z]
+        plt.scatter(subdados.lat,subdados.long, color=next(colors))
+    plt.show()
+    return
 
 
 #converte_geojson()
 #junta_tabelas()
 #cluster_algoritmo()
 
-cluster_meu()
+cluster_meu2()
 
